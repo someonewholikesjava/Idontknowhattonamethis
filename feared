@@ -1,0 +1,2076 @@
+-- [[ HEXPLOIT V2 - COMPLETELY SILENT & AUTO EXECUTE ]] --
+
+-- [[ AUTO EXECUTE ON TELEPORT SETUP ]] --
+if not getgenv().HexploitAutoExecuteSetup then
+    getgenv().HexploitAutoExecuteSetup = true
+    
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    
+    LocalPlayer.OnTeleport:Connect(function(State)
+        if State == Enum.TeleportState.Started then
+            local scriptSource = game:HttpGet("https://raw.githubusercontent.com/YourGithub/YourRepo/main/script.lua") -- REPLACE WITH YOUR RAW GITHUB LINK
+            
+            -- For most executors
+            if queue_on_teleport then
+                queue_on_teleport(scriptSource)
+            elseif syn and syn.queue_on_teleport then
+                syn.queue_on_teleport(scriptSource)
+            elseif queueonteleport then
+                queueonteleport(scriptSource)
+            end
+        end
+    end)
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
+
+-- [[ SILENT NOTIFICATION SYSTEM ]] --
+local function SilentNotify(text)
+    -- Does nothing - completely silent
+    return
+end
+
+-- [[ UNLOAD FUNCTION ]] --
+local function UnloadScript()
+    if getgenv().HexploitConnections then
+        for _, c in pairs(getgenv().HexploitConnections) do 
+            if c then pcall(function() c:Disconnect() end) end 
+        end
+    end
+    getgenv().HexploitConnections = {}
+
+    if getgenv().HexploitVisuals then
+        for _, v in pairs(getgenv().HexploitVisuals) do 
+            pcall(function() if v.Remove then v:Remove() else v:Destroy() end end)
+        end
+    end
+    getgenv().HexploitVisuals = {}
+
+    if getgenv().HexploitUI then 
+        pcall(function() getgenv().HexploitUI:Destroy() end) 
+    end
+    
+    for _, gui in pairs(CoreGui:GetChildren()) do
+        if gui.Name == "HexCham" or gui.Name == "HexTag" or gui.Name == "HexLocked" or gui.Name == "HexPreview" or gui.Name == "HexSilentTarget" or gui.Name == "SilentFOVCircle" or gui.Name == "ServerBrowserGUI" or gui.Name == "SilentLockedTarget" then
+            pcall(function() gui:Destroy() end)
+        end
+    end
+end
+
+UnloadScript()
+
+getgenv().HexploitConnections = {}
+getgenv().HexploitVisuals = {}
+
+local function MakeConnection(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(getgenv().HexploitConnections, connection)
+    return connection
+end
+
+-- [[ FEATURE VARIABLES ]] --
+
+local Aimlock = {
+    Enabled = false,
+    Locked = false,
+    Target = nil,
+    Key = Enum.KeyCode.C,
+    Smoothness = 0,
+    Prediction = 0,
+    AutoPrediction = false,
+    Orbit = false,
+    OrbitSpeed = 10,
+    Radius = 8,
+    Highlights = false, 
+    SelectedParts = { ["Head"] = true }, 
+    CheckKnocked = true,
+    WallCheck = true,
+    PauseOnWall = true
+}
+
+local SilentAim = {
+    Enabled = false,
+    SelectedParts = { ["Head"] = true },
+    Prediction = 0,
+    AutoPrediction = false,
+    HitChance = 100,
+    OnlyInFOV = true,
+    VisibleCheck = true,
+    FOVRadius = 100,
+    ShowFOV = true,
+    FOVColor = Color3.fromRGB(255, 255, 255),
+    FOVFilled = false,
+    FOVTransparency = 1,
+    FOVThickness = 2,
+    JumpOffset = 0,
+    UseJumpOffset = false,
+    AntiCurve = false,
+    CheckKnocked = true,
+    ShowTarget = true,
+    TargetLockEnabled = false,
+    TargetLockKey = Enum.KeyCode.Q,
+    LockedTarget = nil,
+    TargetLocked = false
+}
+
+local AutoLay = {
+    Enabled = false,
+    Key = Enum.KeyCode.X
+}
+
+local Visuals = {
+    Chams = false,
+    Names = false,
+    ChamColor = Color3.new(1, 1, 1)
+}
+
+local SelectedPlayer = nil
+local Spectating = false
+
+local CachedAimData = {
+    TargetPosition = nil,
+    TargetPart = nil,
+    LastUpdate = 0,
+    TargetVisible = true,
+    VisiblePart = nil
+}
+
+-- [[ AUTO PREDICTION ]] --
+local CurrentPing = 0
+local LastPingUpdate = 0
+local PingDisplayLabel = nil
+
+local function CalculatePrediction(pingMs)
+    local basePrediction = 0.110
+    local predictionPerMs = 0.0005
+    local calculated = basePrediction + (pingMs * predictionPerMs)
+    return math.floor(calculated * 1000 + 0.5) / 1000
+end
+
+local function UpdateAutoPrediction()
+    local now = tick()
+    if now - LastPingUpdate < 0.5 then return end
+    LastPingUpdate = now
+    
+    local success, ping = pcall(function()
+        return LocalPlayer:GetNetworkPing() * 1000
+    end)
+    
+    if success and ping then
+        CurrentPing = math.floor(ping + 0.5)
+        local newPrediction = CalculatePrediction(CurrentPing)
+        
+        if Aimlock.AutoPrediction then
+            Aimlock.Prediction = newPrediction
+            if Options and Options.Pred then
+                pcall(function()
+                    Options.Pred:SetValue(string.format("%.3f", newPrediction))
+                end)
+            end
+        end
+        
+        if SilentAim.AutoPrediction then
+            SilentAim.Prediction = newPrediction
+            if Options and Options.SilentPred then
+                pcall(function()
+                    Options.SilentPred:SetValue(string.format("%.3f", newPrediction))
+                end)
+            end
+        end
+    end
+end
+
+-- [[ PERFECTLY CENTERED GUI FOV CIRCLE ]] --
+local FOVCircleGui = Instance.new("ScreenGui")
+FOVCircleGui.Name = "SilentFOVCircle"
+FOVCircleGui.IgnoreGuiInset = true
+FOVCircleGui.ResetOnSpawn = false
+FOVCircleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+if gethui then
+    FOVCircleGui.Parent = gethui()
+else
+    FOVCircleGui.Parent = CoreGui
+end
+
+local FOVCircleFrame = Instance.new("Frame")
+FOVCircleFrame.Name = "FOVCircle"
+FOVCircleFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVCircleFrame.Size = UDim2.new(0, SilentAim.FOVRadius * 2, 0, SilentAim.FOVRadius * 2)
+FOVCircleFrame.BackgroundTransparency = SilentAim.FOVFilled and 0.9 or 1
+FOVCircleFrame.BackgroundColor3 = SilentAim.FOVColor
+FOVCircleFrame.BorderSizePixel = 0
+FOVCircleFrame.Visible = false
+FOVCircleFrame.Parent = FOVCircleGui
+
+local FOVCorner = Instance.new("UICorner")
+FOVCorner.CornerRadius = UDim.new(1, 0)
+FOVCorner.Parent = FOVCircleFrame
+
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Color = SilentAim.FOVColor
+FOVStroke.Thickness = SilentAim.FOVThickness
+FOVStroke.Transparency = 1 - SilentAim.FOVTransparency
+FOVStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+FOVStroke.Parent = FOVCircleFrame
+
+table.insert(getgenv().HexploitVisuals, FOVCircleGui)
+
+local function UpdateFOVCircle()
+    if SilentAim.Enabled and SilentAim.ShowFOV then
+        FOVCircleFrame.Visible = true
+        local mouseLocation = UserInputService:GetMouseLocation()
+        FOVCircleFrame.Position = UDim2.new(0, mouseLocation.X, 0, mouseLocation.Y)
+        FOVCircleFrame.Size = UDim2.new(0, SilentAim.FOVRadius * 2, 0, SilentAim.FOVRadius * 2)
+        FOVStroke.Color = SilentAim.FOVColor
+        FOVStroke.Thickness = SilentAim.FOVThickness
+        FOVStroke.Transparency = 1 - SilentAim.FOVTransparency
+        FOVCircleFrame.BackgroundTransparency = SilentAim.FOVFilled and 0.9 or 1
+        FOVCircleFrame.BackgroundColor3 = SilentAim.FOVColor
+    else
+        FOVCircleFrame.Visible = false
+    end
+end
+
+-- [[ SILENT AIM TARGET HIGHLIGHT ]] --
+local SilentTargetHL = Instance.new("Highlight")
+SilentTargetHL.Name = "HexSilentTarget"
+SilentTargetHL.FillColor = Color3.fromRGB(0, 255, 0)
+SilentTargetHL.FillTransparency = 0.5
+SilentTargetHL.OutlineColor = Color3.fromRGB(0, 255, 0)
+SilentTargetHL.OutlineTransparency = 0
+SilentTargetHL.Enabled = false
+SilentTargetHL.Parent = CoreGui
+table.insert(getgenv().HexploitVisuals, SilentTargetHL)
+
+-- [[ LOCKED TARGET HIGHLIGHT (BLUE) ]] --
+local LockedTargetHL = Instance.new("Highlight")
+LockedTargetHL.Name = "SilentLockedTarget"
+LockedTargetHL.FillColor = Color3.fromRGB(0, 150, 255)
+LockedTargetHL.FillTransparency = 0.5
+LockedTargetHL.OutlineColor = Color3.fromRGB(0, 150, 255)
+LockedTargetHL.OutlineTransparency = 0
+LockedTargetHL.Enabled = false
+LockedTargetHL.Parent = CoreGui
+table.insert(getgenv().HexploitVisuals, LockedTargetHL)
+
+-- [[ SERVER BROWSER FUNCTION ]] --
+local function OpenServerBrowser()
+    for _, gui in pairs(CoreGui:GetChildren()) do
+        if gui.Name == "ServerBrowserGUI" then
+            pcall(function() gui:Destroy() end)
+        end
+    end
+
+    local ServerBrowserGUI = Instance.new("ScreenGui")
+    ServerBrowserGUI.Name = "ServerBrowserGUI"
+    ServerBrowserGUI.ResetOnSpawn = false
+    ServerBrowserGUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    if gethui then
+        ServerBrowserGUI.Parent = gethui()
+    else
+        ServerBrowserGUI.Parent = CoreGui
+    end
+
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Size = UDim2.new(0, 800, 0, 450)
+    MainFrame.Position = UDim2.new(0.5, -400, 0.5, -225)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    MainFrame.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    MainFrame.BorderSizePixel = 2
+    MainFrame.Parent = ServerBrowserGUI
+
+    local dragging, dragInput, dragStart, startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+
+    MainFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    MainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+
+    local HeaderFrame = Instance.new("Frame")
+    HeaderFrame.Size = UDim2.new(1, 0, 0, 50)
+    HeaderFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    HeaderFrame.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    HeaderFrame.BorderSizePixel = 2
+    HeaderFrame.Parent = MainFrame
+
+    local ServerIDLabel = Instance.new("TextLabel")
+    ServerIDLabel.Size = UDim2.new(0.5, -5, 1, 0)
+    ServerIDLabel.Position = UDim2.new(0, 5, 0, 0)
+    ServerIDLabel.BackgroundTransparency = 1
+    ServerIDLabel.Text = "Server Id (Job Id)"
+    ServerIDLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ServerIDLabel.TextSize = 16
+    ServerIDLabel.Font = Enum.Font.GothamBold
+    ServerIDLabel.TextXAlignment = Enum.TextXAlignment.Left
+    ServerIDLabel.Parent = HeaderFrame
+
+    local PlayersLabel = Instance.new("TextLabel")
+    PlayersLabel.Size = UDim2.new(0.25, -5, 1, 0)
+    PlayersLabel.Position = UDim2.new(0.5, 5, 0, 0)
+    PlayersLabel.BackgroundTransparency = 1
+    PlayersLabel.Text = "Players"
+    PlayersLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PlayersLabel.TextSize = 16
+    PlayersLabel.Font = Enum.Font.GothamBold
+    PlayersLabel.TextXAlignment = Enum.TextXAlignment.Center
+    PlayersLabel.Parent = HeaderFrame
+
+    local PingLabel = Instance.new("TextLabel")
+    PingLabel.Size = UDim2.new(0.25, -10, 1, 0)
+    PingLabel.Position = UDim2.new(0.75, 5, 0, 0)
+    PingLabel.BackgroundTransparency = 1
+    PingLabel.Text = "Ping"
+    PingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PingLabel.TextSize = 16
+    PingLabel.Font = Enum.Font.GothamBold
+    PingLabel.TextXAlignment = Enum.TextXAlignment.Center
+    PingLabel.Parent = HeaderFrame
+
+    local ScrollFrame = Instance.new("ScrollingFrame")
+    ScrollFrame.Size = UDim2.new(1, -10, 1, -110)
+    ScrollFrame.Position = UDim2.new(0, 5, 0, 55)
+    ScrollFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    ScrollFrame.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    ScrollFrame.BorderSizePixel = 1
+    ScrollFrame.ScrollBarThickness = 8
+    ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(255, 0, 0)
+    ScrollFrame.Parent = MainFrame
+
+    local UIListLayout = Instance.new("UIListLayout")
+    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    UIListLayout.Padding = UDim.new(0, 2)
+    UIListLayout.Parent = ScrollFrame
+
+    local LoadingLabel = Instance.new("TextLabel")
+    LoadingLabel.Size = UDim2.new(1, 0, 0, 50)
+    LoadingLabel.Position = UDim2.new(0, 0, 0.4, 0)
+    LoadingLabel.BackgroundTransparency = 1
+    LoadingLabel.Text = "Loading servers..."
+    LoadingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    LoadingLabel.TextSize = 18
+    LoadingLabel.Font = Enum.Font.GothamBold
+    LoadingLabel.Parent = MainFrame
+
+    local ButtonFrame = Instance.new("Frame")
+    ButtonFrame.Size = UDim2.new(1, 0, 0, 50)
+    ButtonFrame.Position = UDim2.new(0, 0, 1, -50)
+    ButtonFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    ButtonFrame.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    ButtonFrame.BorderSizePixel = 2
+    ButtonFrame.Parent = MainFrame
+
+    local RefreshButton = Instance.new("TextButton")
+    RefreshButton.Size = UDim2.new(0.33, -10, 0, 40)
+    RefreshButton.Position = UDim2.new(0, 5, 0.5, -20)
+    RefreshButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    RefreshButton.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    RefreshButton.BorderSizePixel = 2
+    RefreshButton.Text = "Refresh"
+    RefreshButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    RefreshButton.TextSize = 16
+    RefreshButton.Font = Enum.Font.GothamBold
+    RefreshButton.Parent = ButtonFrame
+
+    local GameIDButton = Instance.new("TextButton")
+    GameIDButton.Size = UDim2.new(0.33, -10, 0, 40)
+    GameIDButton.Position = UDim2.new(0.33, 5, 0.5, -20)
+    GameIDButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    GameIDButton.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    GameIDButton.BorderSizePixel = 2
+    GameIDButton.Text = "Game Id"
+    GameIDButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    GameIDButton.TextSize = 16
+    GameIDButton.Font = Enum.Font.GothamBold
+    GameIDButton.Parent = ButtonFrame
+
+    local CloseButton = Instance.new("TextButton")
+    CloseButton.Size = UDim2.new(0.33, -10, 0, 40)
+    CloseButton.Position = UDim2.new(0.66, 5, 0.5, -20)
+    CloseButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    CloseButton.BorderColor3 = Color3.fromRGB(255, 0, 0)
+    CloseButton.BorderSizePixel = 2
+    CloseButton.Text = "Close"
+    CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseButton.TextSize = 16
+    CloseButton.Font = Enum.Font.GothamBold
+    CloseButton.Parent = ButtonFrame
+
+    local function Notify(text)
+        -- Silent notification inside server browser only
+        local NotifFrame = Instance.new("Frame")
+        NotifFrame.Size = UDim2.new(0, 300, 0, 50)
+        NotifFrame.Position = UDim2.new(0.5, -150, 0, -60)
+        NotifFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        NotifFrame.BorderColor3 = Color3.fromRGB(255, 0, 0)
+        NotifFrame.BorderSizePixel = 2
+        NotifFrame.Parent = MainFrame
+        
+        local NotifText = Instance.new("TextLabel")
+        NotifText.Size = UDim2.new(1, 0, 1, 0)
+        NotifText.BackgroundTransparency = 1
+        NotifText.Text = text
+        NotifText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        NotifText.TextSize = 14
+        NotifText.Font = Enum.Font.GothamBold
+        NotifText.Parent = NotifFrame
+        
+        task.spawn(function()
+            task.wait(3)
+            pcall(function() NotifFrame:Destroy() end)
+        end)
+    end
+
+    local function CreateServerEntry(serverData, index)
+        local ServerFrame = Instance.new("TextButton")
+        ServerFrame.Size = UDim2.new(1, -8, 0, 35)
+        ServerFrame.BackgroundColor3 = index % 2 == 0 and Color3.fromRGB(30, 30, 30) or Color3.fromRGB(35, 35, 35)
+        ServerFrame.BorderColor3 = Color3.fromRGB(255, 0, 0)
+        ServerFrame.BorderSizePixel = 1
+        ServerFrame.AutoButtonColor = false
+        ServerFrame.Text = ""
+        ServerFrame.LayoutOrder = index
+        ServerFrame.Parent = ScrollFrame
+        
+        ServerFrame.MouseEnter:Connect(function()
+            ServerFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+        end)
+        
+        ServerFrame.MouseLeave:Connect(function()
+            ServerFrame.BackgroundColor3 = index % 2 == 0 and Color3.fromRGB(30, 30, 30) or Color3.fromRGB(35, 35, 35)
+        end)
+        
+        local ServerID = Instance.new("TextLabel")
+        ServerID.Size = UDim2.new(0.5, -10, 1, 0)
+        ServerID.Position = UDim2.new(0, 10, 0, 0)
+        ServerID.BackgroundTransparency = 1
+        ServerID.Text = serverData.id
+        ServerID.TextColor3 = Color3.fromRGB(200, 200, 200)
+        ServerID.TextSize = 13
+        ServerID.Font = Enum.Font.Gotham
+        ServerID.TextXAlignment = Enum.TextXAlignment.Left
+        ServerID.TextTruncate = Enum.TextTruncate.AtEnd
+        ServerID.Parent = ServerFrame
+        
+        local PlayersText = Instance.new("TextLabel")
+        PlayersText.Size = UDim2.new(0.25, -10, 1, 0)
+        PlayersText.Position = UDim2.new(0.5, 5, 0, 0)
+        PlayersText.BackgroundTransparency = 1
+        PlayersText.Text = serverData.playing .. "/" .. serverData.maxPlayers
+        PlayersText.TextColor3 = Color3.fromRGB(200, 200, 200)
+        PlayersText.TextSize = 13
+        PlayersText.Font = Enum.Font.Gotham
+        PlayersText.TextXAlignment = Enum.TextXAlignment.Center
+        PlayersText.Parent = ServerFrame
+        
+        local PingText = Instance.new("TextLabel")
+        PingText.Size = UDim2.new(0.25, -15, 1, 0)
+        PingText.Position = UDim2.new(0.75, 5, 0, 0)
+        PingText.BackgroundTransparency = 1
+        PingText.Text = tostring(serverData.ping)
+        PingText.TextColor3 = serverData.ping < 100 and Color3.fromRGB(0, 255, 0) or (serverData.ping < 200 and Color3.fromRGB(255, 255, 0) or Color3.fromRGB(255, 0, 0))
+        PingText.TextSize = 13
+        PingText.Font = Enum.Font.GothamBold
+        PingText.TextXAlignment = Enum.TextXAlignment.Center
+        PingText.Parent = ServerFrame
+        
+        ServerFrame.MouseButton1Click:Connect(function()
+            if serverData.id ~= game.JobId then
+                Notify("Joining server...")
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, serverData.id, LocalPlayer)
+            else
+                Notify("You're already in this server!")
+            end
+        end)
+    end
+
+    local function LoadServers()
+        for _, child in pairs(ScrollFrame:GetChildren()) do
+            if child:IsA("TextButton") then
+                pcall(function() child:Destroy() end)
+            end
+        end
+        
+        LoadingLabel.Visible = true
+        LoadingLabel.Text = "Loading servers..."
+        
+        local Api = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        
+        local function FetchServers(cursor)
+            local success, result = pcall(function()
+                local url = Api .. ((cursor and "&cursor=" .. cursor) or "")
+                local response = game:HttpGet(url)
+                return HttpService:JSONDecode(response)
+            end)
+            return success and result or nil
+        end
+        
+        local allServers = {}
+        local cursor = nil
+        local pageCount = 0
+        
+        repeat
+            local data = FetchServers(cursor)
+            if not data or not data.data then break end
+            
+            for _, server in pairs(data.data) do
+                if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                    table.insert(allServers, {
+                        id = server.id,
+                        playing = server.playing,
+                        maxPlayers = server.maxPlayers,
+                        ping = server.ping or 999
+                    })
+                end
+            end
+            
+            cursor = data.nextPageCursor
+            pageCount = pageCount + 1
+        until not cursor or pageCount >= 5
+        
+        table.sort(allServers, function(a, b)
+            return a.ping < b.ping
+        end)
+        
+        LoadingLabel.Visible = false
+        
+        if #allServers == 0 then
+            LoadingLabel.Visible = true
+            LoadingLabel.Text = "No servers found!"
+        else
+            for index, server in pairs(allServers) do
+                CreateServerEntry(server, index)
+            end
+            
+            ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, #allServers * 37)
+            
+            Notify("Loaded " .. #allServers .. " servers!")
+        end
+    end
+
+    RefreshButton.MouseButton1Click:Connect(function()
+        LoadServers()
+    end)
+
+    GameIDButton.MouseButton1Click:Connect(function()
+        if setclipboard then
+            pcall(function() setclipboard(tostring(game.PlaceId)) end)
+            Notify("Game ID copied!")
+        else
+            Notify("Clipboard not supported!")
+        end
+    end)
+
+    CloseButton.MouseButton1Click:Connect(function()
+        pcall(function() ServerBrowserGUI:Destroy() end)
+    end)
+
+    LoadServers()
+end
+
+-- [[ CONFIG SYSTEM ]] --
+local ConfigFolder = "Hexploit_V2"
+local ConfigsFolder = ConfigFolder .. "/Configs"
+
+if not isfolder(ConfigFolder) then
+    makefolder(ConfigFolder)
+end
+if not isfolder(ConfigsFolder) then
+    makefolder(ConfigsFolder)
+end
+
+local function GetAllConfigs()
+    local configs = {}
+    local files = listfiles(ConfigsFolder)
+    
+    for _, file in pairs(files) do
+        local fileName = file:match("^.+/(.+)$") or file:match("^.+\\(.+)$")
+        if fileName and fileName:match("%.json$") then
+            local configName = fileName:gsub("%.json$", "")
+            table.insert(configs, configName)
+        end
+    end
+    
+    if #configs == 0 then
+        table.insert(configs, "No configs found")
+    end
+    
+    return configs
+end
+
+local function SaveConfig(configName)
+    if not configName or configName == "" or configName == "No configs found" then
+        return false
+    end
+    
+    local config = {
+        Aimlock = {
+            Enabled = Aimlock.Enabled,
+            Smoothness = Aimlock.Smoothness,
+            Prediction = Aimlock.Prediction,
+            AutoPrediction = Aimlock.AutoPrediction,
+            Orbit = Aimlock.Orbit,
+            OrbitSpeed = Aimlock.OrbitSpeed,
+            Radius = Aimlock.Radius,
+            Highlights = Aimlock.Highlights,
+            SelectedParts = Aimlock.SelectedParts,
+            CheckKnocked = Aimlock.CheckKnocked,
+            WallCheck = Aimlock.WallCheck,
+            PauseOnWall = Aimlock.PauseOnWall,
+            Key = tostring(Aimlock.Key)
+        },
+        SilentAim = {
+            Enabled = SilentAim.Enabled,
+            SelectedParts = SilentAim.SelectedParts,
+            Prediction = SilentAim.Prediction,
+            AutoPrediction = SilentAim.AutoPrediction,
+            HitChance = SilentAim.HitChance,
+            OnlyInFOV = SilentAim.OnlyInFOV,
+            VisibleCheck = SilentAim.VisibleCheck,
+            FOVRadius = SilentAim.FOVRadius,
+            ShowFOV = SilentAim.ShowFOV,
+            FOVColor = {R = SilentAim.FOVColor.R, G = SilentAim.FOVColor.G, B = SilentAim.FOVColor.B},
+            FOVFilled = SilentAim.FOVFilled,
+            FOVTransparency = SilentAim.FOVTransparency,
+            FOVThickness = SilentAim.FOVThickness,
+            JumpOffset = SilentAim.JumpOffset,
+            UseJumpOffset = SilentAim.UseJumpOffset,
+            AntiCurve = SilentAim.AntiCurve,
+            CheckKnocked = SilentAim.CheckKnocked,
+            ShowTarget = SilentAim.ShowTarget,
+            TargetLockEnabled = SilentAim.TargetLockEnabled,
+            TargetLockKey = tostring(SilentAim.TargetLockKey)
+        },
+        AutoLay = {
+            Enabled = AutoLay.Enabled,
+            Key = tostring(AutoLay.Key)
+        },
+        Visuals = {
+            Chams = Visuals.Chams,
+            Names = Visuals.Names,
+            ChamColor = {
+                R = Visuals.ChamColor.R,
+                G = Visuals.ChamColor.G,
+                B = Visuals.ChamColor.B
+            }
+        }
+    }
+    
+    local success, encoded = pcall(function()
+        return HttpService:JSONEncode(config)
+    end)
+    
+    if success then
+        local filePath = ConfigsFolder .. "/" .. configName .. ".json"
+        writefile(filePath, encoded)
+        return true
+    end
+    return false
+end
+
+local function ApplyConfigToUI(decoded)
+    if not decoded or not Options or not Toggles then return false end
+    
+    if decoded.Aimlock then
+        Aimlock.Enabled = decoded.Aimlock.Enabled == true
+        Aimlock.CheckKnocked = decoded.Aimlock.CheckKnocked ~= false
+        Aimlock.WallCheck = decoded.Aimlock.WallCheck ~= false
+        Aimlock.PauseOnWall = decoded.Aimlock.PauseOnWall ~= false
+        Aimlock.Orbit = decoded.Aimlock.Orbit == true
+        Aimlock.Highlights = decoded.Aimlock.Highlights == true
+        Aimlock.AutoPrediction = decoded.Aimlock.AutoPrediction == true
+        Aimlock.Smoothness = decoded.Aimlock.Smoothness or 0
+        Aimlock.Prediction = decoded.Aimlock.Prediction or 0
+        Aimlock.OrbitSpeed = decoded.Aimlock.OrbitSpeed or 10
+        Aimlock.Radius = decoded.Aimlock.Radius or 8
+        Aimlock.SelectedParts = decoded.Aimlock.SelectedParts or { ["Head"] = true }
+        
+        if decoded.Aimlock.Key then
+            local keyString = decoded.Aimlock.Key:gsub("Enum.KeyCode.", "")
+            local keySuccess, keyEnum = pcall(function()
+                return Enum.KeyCode[keyString]
+            end)
+            if keySuccess and keyEnum then
+                Aimlock.Key = keyEnum
+            end
+        end
+        
+        task.wait(0.2)
+        
+        pcall(function() Toggles.Aimlock:SetValue(Aimlock.Enabled) end)
+        pcall(function() Toggles.CheckKnocked:SetValue(Aimlock.CheckKnocked) end)
+        pcall(function() Toggles.WallCheck:SetValue(Aimlock.WallCheck) end)
+        pcall(function() Toggles.PauseOnWall:SetValue(Aimlock.PauseOnWall) end)
+        pcall(function() Toggles.Orbit:SetValue(Aimlock.Orbit) end)
+        pcall(function() Toggles.Highlights:SetValue(Aimlock.Highlights) end)
+        pcall(function() Toggles.AutoPred:SetValue(Aimlock.AutoPrediction) end)
+        pcall(function() Options.Smooth:SetValue(Aimlock.Smoothness) end)
+        
+        if not Aimlock.AutoPrediction then
+            pcall(function() Options.Pred:SetValue(tostring(Aimlock.Prediction)) end)
+        end
+        
+        pcall(function() Options.HitboxSelector:SetValue(Aimlock.SelectedParts) end)
+        pcall(function() 
+            if Options.Key then
+                Options.Key:SetValue(Aimlock.Key)
+                if Options.Key.SetValueRaw then
+                    Options.Key.SetValueRaw(Aimlock.Key)
+                end
+            end
+        end)
+    end
+    
+    if decoded.SilentAim then
+        SilentAim.Enabled = decoded.SilentAim.Enabled == true
+        SilentAim.SelectedParts = decoded.SilentAim.SelectedParts or { ["Head"] = true }
+        SilentAim.Prediction = decoded.SilentAim.Prediction or 0
+        SilentAim.AutoPrediction = decoded.SilentAim.AutoPrediction == true
+        SilentAim.HitChance = decoded.SilentAim.HitChance or 100
+        SilentAim.OnlyInFOV = decoded.SilentAim.OnlyInFOV ~= false
+        SilentAim.VisibleCheck = decoded.SilentAim.VisibleCheck ~= false
+        SilentAim.FOVRadius = decoded.SilentAim.FOVRadius or 100
+        SilentAim.ShowFOV = decoded.SilentAim.ShowFOV ~= false
+        SilentAim.ShowTarget = decoded.SilentAim.ShowTarget ~= false
+        SilentAim.TargetLockEnabled = decoded.SilentAim.TargetLockEnabled == true
+        
+        if decoded.SilentAim.TargetLockKey then
+            local keyString = decoded.SilentAim.TargetLockKey:gsub("Enum.KeyCode.", "")
+            local keySuccess, keyEnum = pcall(function()
+                return Enum.KeyCode[keyString]
+            end)
+            if keySuccess and keyEnum then
+                SilentAim.TargetLockKey = keyEnum
+            end
+        end
+        
+        if decoded.SilentAim.FOVColor then
+            SilentAim.FOVColor = Color3.fromRGB(
+                decoded.SilentAim.FOVColor.R or 255,
+                decoded.SilentAim.FOVColor.G or 255,
+                decoded.SilentAim.FOVColor.B or 255
+            )
+        end
+        
+        SilentAim.FOVFilled = decoded.SilentAim.FOVFilled == true
+        SilentAim.FOVTransparency = decoded.SilentAim.FOVTransparency or 1
+        SilentAim.FOVThickness = decoded.SilentAim.FOVThickness or 2
+        SilentAim.JumpOffset = decoded.SilentAim.JumpOffset or 0
+        SilentAim.UseJumpOffset = decoded.SilentAim.UseJumpOffset == true
+        SilentAim.AntiCurve = decoded.SilentAim.AntiCurve == true
+        SilentAim.CheckKnocked = decoded.SilentAim.CheckKnocked ~= false
+        
+        pcall(function() Toggles.SilentEnabled:SetValue(SilentAim.Enabled) end)
+        pcall(function() Toggles.SilentAutoPred:SetValue(SilentAim.AutoPrediction) end)
+        pcall(function() Toggles.SilentFOVOnly:SetValue(SilentAim.OnlyInFOV) end)
+        pcall(function() Toggles.SilentVisible:SetValue(SilentAim.VisibleCheck) end)
+        pcall(function() Toggles.SilentShowFOV:SetValue(SilentAim.ShowFOV) end)
+        pcall(function() Toggles.SilentFilled:SetValue(SilentAim.FOVFilled) end)
+        pcall(function() Toggles.SilentJumpOffset:SetValue(SilentAim.UseJumpOffset) end)
+        pcall(function() Toggles.SilentAntiCurve:SetValue(SilentAim.AntiCurve) end)
+        pcall(function() Toggles.SilentCheckKnocked:SetValue(SilentAim.CheckKnocked) end)
+        pcall(function() Toggles.SilentShowTarget:SetValue(SilentAim.ShowTarget) end)
+        pcall(function() Toggles.SilentTargetLock:SetValue(SilentAim.TargetLockEnabled) end)
+        pcall(function() Options.SilentHitChance:SetValue(SilentAim.HitChance) end)
+        pcall(function() Options.SilentFOVRadius:SetValue(SilentAim.FOVRadius) end)
+        pcall(function() Options.SilentFOVThickness:SetValue(SilentAim.FOVThickness) end)
+        pcall(function() Options.SilentFOVTransparency:SetValue(SilentAim.FOVTransparency) end)
+        pcall(function() Options.SilentJumpOffsetValue:SetValue(SilentAim.JumpOffset) end)
+        pcall(function() Options.SilentHitboxSelector:SetValue(SilentAim.SelectedParts) end)
+        pcall(function() Options.SilentFOVCol:SetValueRGB(SilentAim.FOVColor) end)
+        pcall(function()
+            if Options.SilentTargetLockKey then
+                Options.SilentTargetLockKey:SetValue(SilentAim.TargetLockKey)
+            end
+        end)
+        
+        if not SilentAim.AutoPrediction then
+            pcall(function() Options.SilentPred:SetValue(tostring(SilentAim.Prediction)) end)
+        end
+    end
+    
+    if decoded.AutoLay then
+        AutoLay.Enabled = decoded.AutoLay.Enabled == true
+        if decoded.AutoLay.Key then
+            local keyString = decoded.AutoLay.Key:gsub("Enum.KeyCode.", "")
+            local keySuccess, keyEnum = pcall(function()
+                return Enum.KeyCode[keyString]
+            end)
+            if keySuccess and keyEnum then
+                AutoLay.Key = keyEnum
+            end
+        end
+        pcall(function() Toggles.AutoLay:SetValue(AutoLay.Enabled) end)
+        pcall(function() 
+            if Options.AutoLayKey then
+                Options.AutoLayKey:SetValue(AutoLay.Key)
+            end
+        end)
+    end
+    
+    if decoded.Visuals then
+        Visuals.Chams = decoded.Visuals.Chams == true
+        Visuals.Names = decoded.Visuals.Names == true
+        
+        if decoded.Visuals.ChamColor then
+            Visuals.ChamColor = Color3.new(
+                decoded.Visuals.ChamColor.R or 1,
+                decoded.Visuals.ChamColor.G or 1,
+                decoded.Visuals.ChamColor.B or 1
+            )
+        end
+        
+        pcall(function() Toggles.ChamsTog:SetValue(Visuals.Chams) end)
+        pcall(function() Toggles.NamesTog:SetValue(Visuals.Names) end)
+        pcall(function() Options.ChamCol:SetValueRGB(Visuals.ChamColor) end)
+    end
+    
+    return true
+end
+
+local function LoadConfig(configName)
+    if not configName or configName == "" or configName == "No configs found" then
+        return false
+    end
+    
+    local filePath = ConfigsFolder .. "/" .. configName .. ".json"
+    
+    if not isfile(filePath) then
+        return false
+    end
+    
+    local success, fileContent = pcall(function()
+        return readfile(filePath)
+    end)
+    
+    if not success then
+        return false
+    end
+    
+    local decoded
+    success, decoded = pcall(function()
+        return HttpService:JSONDecode(fileContent)
+    end)
+    
+    if not success then
+        return false
+    end
+    
+    ApplyConfigToUI(decoded)
+    
+    return true
+end
+
+local function DeleteConfig(configName)
+    if not configName or configName == "" or configName == "No configs found" then
+        return false
+    end
+    
+    local filePath = ConfigsFolder .. "/" .. configName .. ".json"
+    
+    if isfile(filePath) then
+        delfile(filePath)
+        return true
+    else
+        return false
+    end
+end
+
+local function LoadAutoConfig()
+    local autoConfigPath = ConfigFolder .. "/autoload.txt"
+    if isfile(autoConfigPath) then
+        local configName = readfile(autoConfigPath)
+        if configName and configName ~= "" then
+            return LoadConfig(configName)
+        end
+    end
+    return false
+end
+
+local function SetAutoConfig(configName)
+    if not configName or configName == "" or configName == "No configs found" then
+        return false
+    end
+    
+    local autoConfigPath = ConfigFolder .. "/autoload.txt"
+    writefile(autoConfigPath, configName)
+    
+    return true
+end
+
+-- [[ OBJECT POOLING ]] --
+local LockedHL = Instance.new("Highlight")
+LockedHL.Name = "HexLocked"
+LockedHL.FillColor = Color3.fromRGB(255, 0, 0)
+LockedHL.FillTransparency = 0.5
+LockedHL.OutlineTransparency = 1
+LockedHL.Enabled = false
+LockedHL.Parent = CoreGui
+table.insert(getgenv().HexploitVisuals, LockedHL)
+
+local PreviewHL = Instance.new("Highlight")
+PreviewHL.Name = "HexPreview"
+PreviewHL.FillColor = Color3.fromRGB(0, 0, 255)
+PreviewHL.FillTransparency = 0.5
+PreviewHL.OutlineTransparency = 1
+PreviewHL.Enabled = false
+PreviewHL.Parent = CoreGui
+table.insert(getgenv().HexploitVisuals, PreviewHL)
+
+local PlayerVisuals = {} 
+
+-- [[ OPTIMIZED UTILS ]] --
+
+local RayParams = RaycastParams.new()
+RayParams.FilterType = Enum.RaycastFilterType.Exclude
+RayParams.IgnoreWater = true
+
+local function UpdateRayParams()
+    local ignore = {LocalPlayer.Character, Camera, Workspace:FindFirstChild("Ignored"), Workspace:FindFirstChild("Barrier")}
+    RayParams.FilterDescendantsInstances = ignore
+end
+UpdateRayParams()
+MakeConnection(LocalPlayer.CharacterAdded, function() task.wait(0.5) UpdateRayParams() end)
+
+local KnockCache = {}
+local KnockCacheTime = {}
+
+local function IsKnocked(char)
+    if not char then return true end
+    
+    local now = tick()
+    if KnockCacheTime[char] and (now - KnockCacheTime[char]) < 2 then
+        return KnockCache[char]
+    end
+    
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then 
+        KnockCache[char] = true
+        KnockCacheTime[char] = now
+        return true 
+    end
+    
+    if hum.PlatformStand or (hum.Sit and not hum.SeatPart) then 
+        KnockCache[char] = true
+        KnockCacheTime[char] = now
+        return true 
+    end
+    
+    if char:FindFirstChild("GRABBING_CONSTRAINT") then 
+        KnockCache[char] = true
+        KnockCacheTime[char] = now
+        return true 
+    end
+    
+    local folder = char:FindFirstChild("BodyEffects") or char:FindFirstChild("BodyValues") or char:FindFirstChild("Status")
+    if folder then
+        local ko = folder:FindFirstChild("K.O") or folder:FindFirstChild("KO") or folder:FindFirstChild("Knocked")
+        if ko and ((ko:IsA("BoolValue") and ko.Value) or (ko:IsA("NumberValue") and ko.Value > 0)) then 
+            KnockCache[char] = true
+            KnockCacheTime[char] = now
+            return true 
+        end
+    end
+    
+    KnockCache[char] = false
+    KnockCacheTime[char] = now
+    return false
+end
+
+local VisibilityCache = {}
+local VisibilityCacheTime = {}
+
+local function IsVisible(targetPlayer, part)
+    if not targetPlayer or not targetPlayer.Character or not part then return false end
+    
+    local now = tick()
+    local cacheKey = targetPlayer.UserId .. "_" .. part.Name
+    
+    if VisibilityCacheTime[cacheKey] and (now - VisibilityCacheTime[cacheKey]) < 0.1 then
+        return VisibilityCache[cacheKey]
+    end
+    
+    local origin = Camera.CFrame.Position
+    local dir = part.Position - origin
+    
+    local ignoreList = {LocalPlayer.Character, Camera, Workspace:FindFirstChild("Ignored"), Workspace:FindFirstChild("Barrier")}
+    
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = ignoreList
+    rayParams.IgnoreWater = true
+    
+    local result = Workspace:Raycast(origin, dir, rayParams)
+    local isVisible = not result or result.Instance:IsDescendantOf(targetPlayer.Character)
+    
+    VisibilityCache[cacheKey] = isVisible
+    VisibilityCacheTime[cacheKey] = now
+    
+    return isVisible
+end
+
+local function GetClosestBodyPart(char, player, ignoreVisibility, partsTable)
+    local closestPart = nil
+    local minDist = 99999
+    local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+    
+    local partsToCheck = partsTable or { ["Head"] = true }
+    if next(partsToCheck) == nil then partsToCheck = { ["Head"] = true } end
+
+    for partName, isEnabled in pairs(partsToCheck) do
+        if isEnabled then
+            local part = char:FindFirstChild(partName)
+            if part then
+                if ignoreVisibility or IsVisible(player, part) then
+                    local pos, onScreen = Camera:WorldToScreenPoint(part.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                        if dist < minDist then
+                            minDist = dist
+                            closestPart = part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    if not closestPart and not ignoreVisibility then
+        local allParts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Torso"}
+        for _, partName in pairs(allParts) do
+            local part = char:FindFirstChild(partName)
+            if part and IsVisible(player, part) then
+                local pos, onScreen = Camera:WorldToScreenPoint(part.Position)
+                if onScreen then
+                    local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        closestPart = part
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestPart
+end
+
+local function GetTarget()
+    local closest = nil
+    local minDist = 99999
+    local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+    
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            if not (Aimlock.CheckKnocked and IsKnocked(p.Character)) then
+                local bestPart = GetClosestBodyPart(p.Character, p, false, Aimlock.SelectedParts)
+                if bestPart then
+                    local hum = p.Character:FindFirstChild("Humanoid")
+                    if hum and hum.Health > 0 then
+                        local pos = Camera:WorldToScreenPoint(bestPart.Position)
+                        local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                        if dist < minDist then
+                            closest = p
+                            minDist = dist
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- [[ SILENT AIM FUNCTIONS ]] --
+
+local function CalculateHitChance(chance)
+    return math.random(1, 100) <= chance
+end
+
+local LastTargetCheck = 0
+local CachedSilentTarget = nil
+
+local function GetClosestPlayerInFOV()
+    local now = tick()
+    if now - LastTargetCheck < 0.05 and CachedSilentTarget and CachedSilentTarget.Character then
+        return CachedSilentTarget
+    end
+    
+    LastTargetCheck = now
+    
+    if SilentAim.TargetLockEnabled and SilentAim.TargetLocked and SilentAim.LockedTarget then
+        local lockedPlayer = SilentAim.LockedTarget
+        if lockedPlayer.Character then
+            if not (SilentAim.CheckKnocked and IsKnocked(lockedPlayer.Character)) then
+                local bestPart = GetClosestBodyPart(lockedPlayer.Character, lockedPlayer, not SilentAim.VisibleCheck, SilentAim.SelectedParts)
+                if bestPart then
+                    local hum = lockedPlayer.Character:FindFirstChild("Humanoid")
+                    if hum and hum.Health > 0 then
+                        local pos, onScreen = Camera:WorldToScreenPoint(bestPart.Position)
+                        if onScreen then
+                            local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+                            local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                            
+                            if dist <= SilentAim.FOVRadius then
+                                CachedSilentTarget = lockedPlayer
+                                return lockedPlayer
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        CachedSilentTarget = nil
+        return nil
+    end
+    
+    local closest = nil
+    local minDist = math.huge
+    local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+    
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            if not (SilentAim.CheckKnocked and IsKnocked(p.Character)) then
+                local bestPart = GetClosestBodyPart(p.Character, p, not SilentAim.VisibleCheck, SilentAim.SelectedParts)
+                if bestPart then
+                    local hum = p.Character:FindFirstChild("Humanoid")
+                    if hum and hum.Health > 0 then
+                        local pos, onScreen = Camera:WorldToScreenPoint(bestPart.Position)
+                        if onScreen then
+                            local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                            
+                            if SilentAim.OnlyInFOV then
+                                if dist <= SilentAim.FOVRadius and dist < minDist then
+                                    closest = p
+                                    minDist = dist
+                                end
+                            elseif dist < minDist then
+                                closest = p
+                                minDist = dist
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    CachedSilentTarget = closest
+    return closest
+end
+
+local function GetPredictedPosition(targetPart, prediction)
+    if not targetPart or not targetPart.Parent then return nil end
+    
+    local char = targetPart.Parent
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    
+    if not root or not hum then return targetPart.Position end
+    
+    local velocity = root.AssemblyLinearVelocity
+    
+    if SilentAim.UseJumpOffset and hum.FloorMaterial == Enum.Material.Air then
+        velocity = velocity + Vector3.new(0, SilentAim.JumpOffset, 0)
+    end
+    
+    if SilentAim.AntiCurve then
+        velocity = velocity:Lerp(Vector3.new(velocity.X, velocity.Y * 0.94, velocity.Z), 0.4)
+    end
+    
+    local predictedPos = targetPart.Position + (velocity * prediction)
+    
+    return predictedPos
+end
+
+-- [[ SILENT AIM HOOK ]] --
+
+local grmt = getrawmetatable(game)
+local backupindex = grmt.__index
+setreadonly(grmt, false)
+
+grmt.__index = newcclosure(function(self, v)
+    if SilentAim.Enabled and tostring(v) == "Hit" then
+        local target = GetClosestPlayerInFOV()
+        
+        if target and target.Character then
+            if not CalculateHitChance(SilentAim.HitChance) then
+                return backupindex(self, v)
+            end
+            
+            local targetPart = GetClosestBodyPart(target.Character, target, not SilentAim.VisibleCheck, SilentAim.SelectedParts)
+            
+            if targetPart then
+                local predictedPos = GetPredictedPosition(targetPart, SilentAim.Prediction)
+                
+                if predictedPos then
+                    return CFrame.new(predictedPos)
+                end
+            end
+        end
+    end
+    
+    return backupindex(self, v)
+end)
+
+-- [[ LAY ANIMATION - COMPLETELY SILENT ]] --
+
+local function TriggerLayAnimation()
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    
+    pcall(function()
+        for _, obj in pairs(replicatedStorage:GetDescendants()) do
+            if obj:IsA("RemoteEvent") and obj.Name == "MainEvent" then
+                obj:FireServer("Lay")
+                return
+            end
+        end
+    end)
+    
+    pcall(function()
+        local paths = {
+            replicatedStorage:FindFirstChild("MainEvent"),
+            replicatedStorage:FindFirstChild("Reload"),
+            replicatedStorage:FindFirstChild("ClientModule") and replicatedStorage.ClientModule:FindFirstChild("Resources") and replicatedStorage.ClientModule.Resources:FindFirstChild("RemoteEvent")
+        }
+        
+        for _, remote in pairs(paths) do
+            if remote and remote:IsA("RemoteEvent") then
+                remote:FireServer("Lay")
+                return
+            end
+        end
+    end)
+    
+    pcall(function()
+        for _, obj in pairs(replicatedStorage:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                local name = obj.Name:lower()
+                if name:find("main") or name:find("event") or name:find("action") or name:find("anim") then
+                    if not name:find("stomp") and not name:find("effect") and not name:find("particle") then
+                        obj:FireServer("Lay")
+                        return
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- [[ VISUALS SYSTEM ]] --
+
+local function AddPlayerVisuals(player)
+    if PlayerVisuals[player] then return end 
+    
+    local visuals = {
+        Cham = Instance.new("Highlight"),
+        NameTag = Instance.new("BillboardGui"),
+        NameText = Instance.new("TextLabel")
+    }
+    
+    visuals.Cham.Name = "HexCham"
+    visuals.Cham.FillTransparency = 0.5
+    visuals.Cham.OutlineTransparency = 1
+    visuals.Cham.Parent = CoreGui
+    
+    visuals.NameTag.Name = "HexTag"
+    visuals.NameTag.Size = UDim2.new(0, 100, 0, 30)
+    visuals.NameTag.StudsOffset = Vector3.new(0, 3, 0)
+    visuals.NameTag.AlwaysOnTop = true
+    visuals.NameTag.Parent = CoreGui
+    
+    visuals.NameText.Parent = visuals.NameTag
+    visuals.NameText.Size = UDim2.new(1, 0, 1, 0)
+    visuals.NameText.BackgroundTransparency = 1
+    visuals.NameText.TextColor3 = Color3.new(1, 1, 1)
+    visuals.NameText.TextStrokeTransparency = 0.5
+    visuals.NameText.Text = player.DisplayName
+    
+    PlayerVisuals[player] = visuals
+    table.insert(getgenv().HexploitVisuals, visuals.Cham)
+    table.insert(getgenv().HexploitVisuals, visuals.NameTag)
+end
+
+local function RemovePlayerVisuals(player)
+    local v = PlayerVisuals[player]
+    if v then
+        pcall(function() v.Cham:Destroy() end)
+        pcall(function() v.NameTag:Destroy() end)
+        PlayerVisuals[player] = nil
+        
+        if player.Character then
+            KnockCache[player.Character] = nil
+            KnockCacheTime[player.Character] = nil
+        end
+    end
+end
+
+MakeConnection(Players.PlayerAdded, AddPlayerVisuals)
+MakeConnection(Players.PlayerRemoving, RemovePlayerVisuals)
+for _, p in pairs(Players:GetPlayers()) do if p ~= LocalPlayer then AddPlayerVisuals(p) end end
+
+-- [[ KEYBIND HANDLERS ]] --
+
+MakeConnection(UserInputService.InputBegan, function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == Aimlock.Key and Aimlock.Enabled then
+        if not Aimlock.Locked then
+            Aimlock.Target = GetTarget()
+            if Aimlock.Target then
+                Aimlock.Locked = true
+                CachedAimData.VisiblePart = nil
+            end
+        else
+            Aimlock.Locked = false
+            Aimlock.Target = nil
+            CachedAimData.TargetPosition = nil
+            CachedAimData.TargetVisible = true
+            CachedAimData.VisiblePart = nil
+            LockedHL.Enabled = false
+        end
+    end
+    
+    if input.KeyCode == AutoLay.Key and AutoLay.Enabled then
+        TriggerLayAnimation()
+    end
+    
+    if input.KeyCode == SilentAim.TargetLockKey and SilentAim.TargetLockEnabled and SilentAim.Enabled then
+        if not SilentAim.TargetLocked then
+            local target = GetClosestPlayerInFOV()
+            if target then
+                SilentAim.LockedTarget = target
+                SilentAim.TargetLocked = true
+            end
+        else
+            SilentAim.TargetLocked = false
+            SilentAim.LockedTarget = nil
+            LockedTargetHL.Enabled = false
+        end
+    end
+end)
+
+-- [[ MAIN LOOPS ]] --
+
+MakeConnection(RunService.RenderStepped, function()
+    UpdateFOVCircle()
+end)
+
+local visualFrameCount = 0
+MakeConnection(RunService.Heartbeat, function()
+    visualFrameCount = visualFrameCount + 1
+    if visualFrameCount % 10 ~= 0 then return end
+    
+    for player, visuals in pairs(PlayerVisuals) do
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Head") then
+            local char = player.Character
+            
+            if Visuals.Chams then
+                visuals.Cham.Adornee = char
+                visuals.Cham.FillColor = Visuals.ChamColor
+                visuals.Cham.Enabled = true
+            else
+                visuals.Cham.Enabled = false
+            end
+            
+            if Visuals.Names then
+                visuals.NameTag.Adornee = char.Head
+                visuals.NameTag.Enabled = true
+            else
+                visuals.NameTag.Enabled = false
+            end
+        else
+            visuals.Cham.Enabled = false
+            visuals.NameTag.Enabled = false
+        end
+    end
+    
+    if Aimlock.AutoPrediction or SilentAim.AutoPrediction then
+        UpdateAutoPrediction()
+    end
+    
+    if SilentAim.Enabled then
+        if SilentAim.TargetLockEnabled and SilentAim.TargetLocked and SilentAim.LockedTarget and SilentAim.LockedTarget.Character then
+            LockedTargetHL.Adornee = SilentAim.LockedTarget.Character
+            LockedTargetHL.Enabled = true
+            SilentTargetHL.Enabled = false
+        elseif SilentAim.ShowTarget and not SilentAim.TargetLocked then
+            local target = GetClosestPlayerInFOV()
+            if target and target.Character then
+                SilentTargetHL.Adornee = target.Character
+                SilentTargetHL.Enabled = true
+                LockedTargetHL.Enabled = false
+            else
+                SilentTargetHL.Enabled = false
+            end
+        else
+            SilentTargetHL.Enabled = false
+            if not SilentAim.TargetLocked then
+                LockedTargetHL.Enabled = false
+            end
+        end
+    else
+        SilentTargetHL.Enabled = false
+        LockedTargetHL.Enabled = false
+    end
+end)
+
+local previewFrameCount = 0
+local cachedPreviewTarget = nil
+
+MakeConnection(RunService.Heartbeat, function()
+    if not Aimlock.Enabled then return end
+    
+    if Aimlock.Locked and Aimlock.Target and Aimlock.Target.Character then
+        local char = Aimlock.Target.Character
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local knocked = Aimlock.CheckKnocked and IsKnocked(char)
+        
+        if not knocked then
+            local preferredPart = GetClosestBodyPart(char, Aimlock.Target, false, Aimlock.SelectedParts)
+            
+            if preferredPart and root then
+                local vel = root.AssemblyLinearVelocity * Aimlock.Prediction
+                CachedAimData.TargetPosition = preferredPart.Position + vel
+                CachedAimData.TargetPart = preferredPart
+                CachedAimData.LastUpdate = tick()
+                CachedAimData.TargetVisible = true
+                CachedAimData.VisiblePart = nil
+                
+                if Aimlock.Highlights then
+                    LockedHL.Adornee = char
+                    LockedHL.Enabled = true
+                    PreviewHL.Enabled = false
+                end
+            else
+                local anyVisiblePart = GetClosestBodyPart(char, Aimlock.Target, false, {
+                    Head = true,
+                    HumanoidRootPart = true,
+                    UpperTorso = true,
+                    LowerTorso = true,
+                    Torso = true
+                })
+                
+                if anyVisiblePart and root and Aimlock.PauseOnWall then
+                    local vel = root.AssemblyLinearVelocity * Aimlock.Prediction
+                    CachedAimData.TargetPosition = anyVisiblePart.Position + vel
+                    CachedAimData.TargetPart = anyVisiblePart
+                    CachedAimData.LastUpdate = tick()
+                    CachedAimData.TargetVisible = true
+                    CachedAimData.VisiblePart = anyVisiblePart.Name
+                    
+                    if Aimlock.Highlights then
+                        LockedHL.Adornee = char
+                        LockedHL.Enabled = true
+                        PreviewHL.Enabled = false
+                    end
+                else
+                    CachedAimData.TargetPosition = nil
+                    CachedAimData.TargetVisible = false
+                    CachedAimData.VisiblePart = nil
+                    
+                    if Aimlock.Highlights then
+                        LockedHL.Adornee = char
+                        LockedHL.Enabled = true
+                        PreviewHL.Enabled = false
+                    end
+                end
+            end
+        end
+        
+        if Aimlock.Orbit and root and not knocked and LocalPlayer.Character then
+            local t = tick()
+            local rad = Aimlock.Radius
+            local speed = Aimlock.OrbitSpeed
+            local offset = Vector3.new(math.sin(t * speed) * rad, 0, math.cos(t * speed) * rad)
+            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(root.Position + offset, root.Position)
+        end
+    else
+        LockedHL.Enabled = false
+        
+        previewFrameCount = previewFrameCount + 1
+        if previewFrameCount % 60 == 0 then
+            cachedPreviewTarget = GetTarget()
+        end
+        
+        if cachedPreviewTarget and Aimlock.Highlights then
+            PreviewHL.Adornee = cachedPreviewTarget.Character
+            PreviewHL.Enabled = true
+        else
+            PreviewHL.Enabled = false
+        end
+    end
+end)
+
+MakeConnection(RunService.RenderStepped, function()
+    if not Aimlock.Enabled or not Aimlock.Locked then return end
+    
+    if CachedAimData.TargetPosition and CachedAimData.TargetVisible then
+        if Aimlock.Smoothness > 0 then
+            Camera.CFrame = Camera.CFrame:Lerp(
+                CFrame.new(Camera.CFrame.Position, CachedAimData.TargetPosition),
+                Aimlock.Smoothness
+            )
+        else
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, CachedAimData.TargetPosition)
+        end
+    end
+end)
+
+-- [[ SERVER HOPPER ]] --
+
+local function ServerHopLowPing()
+    local Api = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
+    
+    local function FetchServers(cursor)
+        local success, result = pcall(function()
+            local url = Api .. ((cursor and "&cursor="..cursor) or "")
+            local response = game:HttpGet(url)
+            return HttpService:JSONDecode(response)
+        end)
+        return success and result or nil
+    end
+    
+    local serversWithPing = {}
+    local serversWithoutPing = {}
+    local cursor = nil
+    local pageCount = 0
+    
+    repeat
+        local data = FetchServers(cursor)
+        if not data or not data.data then break end
+        
+        for _, server in pairs(data.data) do
+            if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                if server.ping and tonumber(server.ping) then
+                    table.insert(serversWithPing, server)
+                else
+                    table.insert(serversWithoutPing, server)
+                end
+            end
+        end
+        
+        cursor = data.nextPageCursor
+        pageCount = pageCount + 1
+    until not cursor or pageCount >= 3
+    
+    if #serversWithPing > 0 then
+        table.sort(serversWithPing, function(a, b)
+            return tonumber(a.ping) < tonumber(b.ping)
+        end)
+        
+        local bestServer = serversWithPing[1]
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, bestServer.id, LocalPlayer)
+    elseif #serversWithoutPing > 0 then
+        local randomServer = serversWithoutPing[math.random(1, #serversWithoutPing)]
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, randomServer.id, LocalPlayer)
+    end
+end
+
+local function ServerHopRandom()
+    local Api = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
+    local function ListServers(cursor)
+        local success, result = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(Api .. ((cursor and "&cursor="..cursor) or "")))
+        end)
+        return success and result or nil
+    end
+    
+    local allServers = {}
+    local cursor = nil
+    local attempts = 0
+    
+    repeat
+        local data = ListServers(cursor)
+        if not data or not data.data then break end
+        
+        for _, server in pairs(data.data) do
+            if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                table.insert(allServers, server)
+            end
+        end
+        
+        cursor = data.nextPageCursor
+        attempts = attempts + 1
+    until not cursor or attempts >= 3
+    
+    if #allServers > 0 then
+        local randomServer = allServers[math.random(1, #allServers)]
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, randomServer.id, LocalPlayer)
+    end
+end
+
+local function GetPlayerNames()
+    local list = {}
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(list, p.DisplayName .. " (@" .. p.Name .. ")") end
+    end
+    if #list == 0 then table.insert(list, "No other players") end
+    return list
+end
+
+-- [[ UI SETUP - STARTS HIDDEN ]] --
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Perfectionsthegoat/hexui/main/goated"))()
+
+-- Override Library Notify to be silent
+Library.Notify = SilentNotify
+
+local Window = Library:CreateWindow({
+    Title = 'Hexploit V2 SILENT | .gg/traced',
+    Center = true, AutoShow = false, TabPadding = 8, MenuFadeTime = 0.2,
+})
+
+getgenv().HexploitUI = Window.Root
+local Tabs = {
+    Main = Window:AddTab('Main'), 
+    Silent = Window:AddTab('Silent Aim'),
+    Visuals = Window:AddTab('Visuals'), 
+    Players = Window:AddTab('Players'), 
+    Misc = Window:AddTab('Misc')
+}
+
+-- AIMLOCK TAB
+local LeftBoxMain = Tabs.Main:AddLeftGroupbox('Aimlock')
+LeftBoxMain:AddToggle('Aimlock', { Text = 'Aimlock', Default = false, Callback = function(v) Aimlock.Enabled = v end })
+LeftBoxMain:AddToggle('CheckKnocked', { Text = 'Ignore Knocked', Default = true, Callback = function(v) Aimlock.CheckKnocked = v end })
+LeftBoxMain:AddToggle('WallCheck', { Text = 'Wall Check', Default = true, Callback = function(v) Aimlock.WallCheck = v end })
+LeftBoxMain:AddToggle('PauseOnWall', { 
+    Text = 'Smart Wall Lock', 
+    Default = true, 
+    Tooltip = 'Aims at visible body parts when partially behind wall', 
+    Callback = function(v) Aimlock.PauseOnWall = v end 
+})
+LeftBoxMain:AddToggle('Orbit', { Text = 'Orbit', Default = false, Callback = function(v) Aimlock.Orbit = v end })
+LeftBoxMain:AddToggle('Highlights', { Text = 'Target Highlight', Default = false, Callback = function(v) Aimlock.Highlights = v end })
+LeftBoxMain:AddLabel('Keybind'):AddKeyPicker('Key', { Default = 'C', Mode = 'Toggle', Text = 'Aim Key', ChangedCallback = function(v) Aimlock.Key = v end })
+LeftBoxMain:AddSlider('Smooth', { Text = 'Smoothness', Default = 0, Min = 0, Max = 1, Rounding = 2, Callback = function(v) Aimlock.Smoothness = v end })
+LeftBoxMain:AddDivider()
+LeftBoxMain:AddToggle('AutoPred', { 
+    Text = 'Auto Prediction', 
+    Default = false, 
+    Callback = function(v) 
+        Aimlock.AutoPrediction = v
+        if v then 
+            UpdateAutoPrediction()
+        end
+    end 
+})
+LeftBoxMain:AddInput('Pred', { 
+    Default = "0", 
+    Text = 'Prediction', 
+    Tooltip = 'Manual prediction (disabled when Auto Prediction is on)',
+    Callback = function(v) 
+        if not Aimlock.AutoPrediction then 
+            Aimlock.Prediction = tonumber(v) or 0 
+        end
+    end 
+})
+
+PingDisplayLabel = LeftBoxMain:AddLabel('Ping: 0ms | Pred: 0.000')
+
+LeftBoxMain:AddDropdown('HitboxSelector', {
+    Values = {'Head', 'HumanoidRootPart', 'Torso', 'UpperTorso', 'LowerTorso'},
+    Default = 1, Multi = true, Text = 'Target Hitboxes',
+    Callback = function(Value) Aimlock.SelectedParts = Value end
+})
+
+-- SILENT AIM TAB
+local LeftBoxSilent = Tabs.Silent:AddLeftGroupbox('Silent Aim Settings')
+LeftBoxSilent:AddToggle('SilentEnabled', { 
+    Text = 'Silent Aim', 
+    Default = false, 
+    Callback = function(v) 
+        SilentAim.Enabled = v 
+        if not v then
+            FOVCircleFrame.Visible = false
+            SilentTargetHL.Enabled = false
+            LockedTargetHL.Enabled = false
+            SilentAim.TargetLocked = false
+            SilentAim.LockedTarget = nil
+        end
+    end 
+})
+
+LeftBoxSilent:AddDivider()
+LeftBoxSilent:AddToggle('SilentTargetLock', {
+    Text = 'Enable Target Lock',
+    Default = false,
+    Tooltip = 'Lock onto a target with keybind',
+    Callback = function(v)
+        SilentAim.TargetLockEnabled = v
+        if not v then
+            SilentAim.TargetLocked = false
+            SilentAim.LockedTarget = nil
+            LockedTargetHL.Enabled = false
+        end
+    end
+})
+
+LeftBoxSilent:AddLabel('Lock Key'):AddKeyPicker('SilentTargetLockKey', {
+    Default = 'Q',
+    Mode = 'Toggle',
+    Text = 'Target Lock Key',
+    Tooltip = 'Press to lock/unlock target',
+    ChangedCallback = function(v) SilentAim.TargetLockKey = v end
+})
+
+LeftBoxSilent:AddDivider()
+LeftBoxSilent:AddToggle('SilentAutoPred', { 
+    Text = 'Auto Prediction', 
+    Default = false, 
+    Callback = function(v) 
+        SilentAim.AutoPrediction = v
+        if v then 
+            UpdateAutoPrediction()
+        end
+    end 
+})
+
+LeftBoxSilent:AddInput('SilentPred', { 
+    Default = "0", 
+    Text = 'Manual Prediction', 
+    Tooltip = 'Manual prediction (disabled when Auto Prediction is on)',
+    Callback = function(v) 
+        if not SilentAim.AutoPrediction then 
+            SilentAim.Prediction = tonumber(v) or 0 
+        end
+    end 
+})
+
+LeftBoxSilent:AddSlider('SilentHitChance', { 
+    Text = 'Hitchance %', 
+    Default = 100, 
+    Min = 0, 
+    Max = 100, 
+    Rounding = 0,
+    Callback = function(v) SilentAim.HitChance = v end 
+})
+
+LeftBoxSilent:AddDropdown('SilentHitboxSelector', {
+    Values = {'Head', 'HumanoidRootPart', 'Torso', 'UpperTorso', 'LowerTorso'},
+    Default = 1, Multi = true, Text = 'Target Hitboxes',
+    Callback = function(Value) SilentAim.SelectedParts = Value end
+})
+
+LeftBoxSilent:AddDivider()
+LeftBoxSilent:AddToggle('SilentCheckKnocked', { Text = 'Ignore Knocked', Default = true, Callback = function(v) SilentAim.CheckKnocked = v end })
+LeftBoxSilent:AddToggle('SilentFOVOnly', { Text = 'Only Silent in FOV', Default = true, Callback = function(v) SilentAim.OnlyInFOV = v end })
+LeftBoxSilent:AddToggle('SilentVisible', { Text = 'Only When Visible', Default = true, Callback = function(v) SilentAim.VisibleCheck = v end })
+
+LeftBoxSilent:AddDivider()
+LeftBoxSilent:AddToggle('SilentJumpOffset', { 
+    Text = 'Jump Offset', 
+    Default = false, 
+    Callback = function(v) SilentAim.UseJumpOffset = v end 
+})
+LeftBoxSilent:AddSlider('SilentJumpOffsetValue', { 
+    Text = 'Jump Value', 
+    Default = 0, 
+    Min = -5, 
+    Max = 5, 
+    Rounding = 1,
+    Callback = function(v) SilentAim.JumpOffset = v end 
+})
+LeftBoxSilent:AddToggle('SilentAntiCurve', { 
+    Text = 'Anti Curve/Resolver', 
+    Default = false,
+    Tooltip = 'Smooths prediction to counter strafing',
+    Callback = function(v) SilentAim.AntiCurve = v end 
+})
+
+local RightBoxSilent = Tabs.Silent:AddRightGroupbox('FOV Circle')
+RightBoxSilent:AddToggle('SilentShowFOV', { 
+    Text = 'Show FOV Circle', 
+    Default = true, 
+    Tooltip = 'Shows a perfectly centered circle',
+    Callback = function(v) 
+        SilentAim.ShowFOV = v 
+        if not v then
+            FOVCircleFrame.Visible = false
+        end
+    end 
+})
+
+RightBoxSilent:AddSlider('SilentFOVRadius', { 
+    Text = 'FOV Size', 
+    Default = 100, 
+    Min = 10, 
+    Max = 500, 
+    Rounding = 0,
+    Callback = function(v) SilentAim.FOVRadius = v end 
+})
+
+RightBoxSilent:AddSlider('SilentFOVThickness', { 
+    Text = 'Circle Thickness', 
+    Default = 2, 
+    Min = 1, 
+    Max = 10, 
+    Rounding = 0,
+    Callback = function(v) SilentAim.FOVThickness = v end 
+})
+
+RightBoxSilent:AddSlider('SilentFOVTransparency', { 
+    Text = 'Transparency', 
+    Default = 1, 
+    Min = 0, 
+    Max = 1, 
+    Rounding = 2,
+    Callback = function(v) SilentAim.FOVTransparency = v end 
+})
+
+RightBoxSilent:AddToggle('SilentFilled', { 
+    Text = 'Filled Circle', 
+    Default = false, 
+    Callback = function(v) SilentAim.FOVFilled = v end 
+})
+
+RightBoxSilent:AddLabel('FOV Color'):AddColorPicker('SilentFOVCol', { 
+    Default = Color3.fromRGB(255, 255, 255), 
+    Title = 'FOV Color', 
+    Callback = function(v) SilentAim.FOVColor = v end 
+})
+
+RightBoxSilent:AddDivider()
+RightBoxSilent:AddToggle('SilentShowTarget', { 
+    Text = 'Show Target Highlight', 
+    Default = true, 
+    Tooltip = 'Green = Auto target | Blue = Locked target',
+    Callback = function(v) 
+        SilentAim.ShowTarget = v
+        if not v then
+            SilentTargetHL.Enabled = false
+        end
+    end 
+})
+
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            if PingDisplayLabel then
+                PingDisplayLabel:SetText(string.format('Ping: %dms | Pred: %.3f', CurrentPing, Aimlock.Prediction))
+            end
+        end)
+    end
+end)
+
+-- VISUALS TAB
+local LeftBoxVis = Tabs.Visuals:AddLeftGroupbox('ESP Settings')
+LeftBoxVis:AddToggle('ChamsTog', { Text = 'Chams', Default = false, Callback = function(v) Visuals.Chams = v end })
+          :AddColorPicker('ChamCol', { Default = Visuals.ChamColor, Title = 'Cham Color', Callback = function(v) Visuals.ChamColor = v end })
+LeftBoxVis:AddToggle('NamesTog', { Text = 'Name ESP', Default = false, Callback = function(v) Visuals.Names = v end })
+
+-- AUTO LAY TAB
+local RightBoxVis = Tabs.Visuals:AddRightGroupbox('Auto Lay Animation')
+RightBoxVis:AddToggle('AutoLay', { 
+    Text = 'Enable Auto Lay', 
+    Default = false, 
+    Tooltip = 'Press keybind to trigger lay animation',
+    Callback = function(v) AutoLay.Enabled = v end 
+})
+RightBoxVis:AddLabel('Keybind'):AddKeyPicker('AutoLayKey', { 
+    Default = 'X', 
+    Mode = 'Toggle', 
+    Text = 'Lay Key', 
+    ChangedCallback = function(v) AutoLay.Key = v end 
+})
+RightBoxVis:AddDivider()
+RightBoxVis:AddButton({
+    Text = 'Test Lay Animation',
+    Func = function()
+        TriggerLayAnimation()
+    end
+})
+
+-- PLAYERS TAB
+local LeftBoxPlayers = Tabs.Players:AddLeftGroupbox('Player Selection')
+local PlayerDropdown = LeftBoxPlayers:AddDropdown('PlayerSelect', {
+    Values = GetPlayerNames(), Default = 1, Multi = false, Text = 'Select Player',
+    Callback = function(Value)
+        local username = Value:match("%(@(.*)%)")
+        if username then SelectedPlayer = Players:FindFirstChild(username) else SelectedPlayer = nil end
+    end
+})
+LeftBoxPlayers:AddButton({
+    Text = 'Refresh List',
+    Func = function()
+        PlayerDropdown:SetValues(GetPlayerNames())
+        PlayerDropdown:SetValue(nil)
+    end
+})
+
+local RightBoxPlayers = Tabs.Players:AddRightGroupbox('Actions')
+RightBoxPlayers:AddButton({
+    Text = 'Teleport To Player',
+    Func = function()
+        if SelectedPlayer and SelectedPlayer.Character then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = SelectedPlayer.Character.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+        end
+    end
+})
+RightBoxPlayers:AddButton({
+    Text = 'Toggle Spectate',
+    Func = function()
+        Spectating = not Spectating
+        if Spectating and SelectedPlayer then 
+            Camera.CameraSubject = SelectedPlayer.Character.Humanoid 
+        else 
+            Spectating = false
+            Camera.CameraSubject = LocalPlayer.Character.Humanoid 
+        end
+    end
+})
+RightBoxPlayers:AddButton({
+    Text = 'Copy Profile URL',
+    Func = function()
+        if SelectedPlayer then
+            if setclipboard then
+                pcall(function() setclipboard("https://www.roblox.com/users/" .. SelectedPlayer.UserId .. "/profile") end)
+            end
+        end
+    end
+})
+
+-- MISC TAB
+local LeftBoxMisc = Tabs.Misc:AddLeftGroupbox('Server Control')
+LeftBoxMisc:AddButton({
+    Text = 'Server Browser',
+    Func = function()
+        OpenServerBrowser()
+    end
+})
+LeftBoxMisc:AddDivider()
+LeftBoxMisc:AddButton({
+    Text = 'Rejoin Server',
+    Func = function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+    end
+})
+LeftBoxMisc:AddButton({
+    Text = 'Server Hop (Random)',
+    Func = function()
+        ServerHopRandom()
+    end
+})
+LeftBoxMisc:AddButton({
+    Text = 'Server Hop (Lowest Ping)',
+    Func = function()
+        ServerHopLowPing()
+    end
+})
+
+local RightBoxMisc = Tabs.Misc:AddRightGroupbox('Script Control')
+
+local ConfigNameInput = RightBoxMisc:AddInput('ConfigName', {
+    Default = '',
+    Numeric = false,
+    Finished = false,
+    Text = 'Config Name',
+    Placeholder = 'Enter config name...',
+})
+
+local ConfigDropdown = RightBoxMisc:AddDropdown('ConfigList', {
+    Values = GetAllConfigs(),
+    Default = 1,
+    Multi = false,
+    Text = 'Select Config'
+})
+
+RightBoxMisc:AddButton({
+    Text = 'Refresh Config List',
+    Func = function()
+        ConfigDropdown:SetValues(GetAllConfigs())
+        ConfigDropdown:SetValue(nil)
+    end
+})
+
+RightBoxMisc:AddButton({
+    Text = 'Save Config',
+    Func = function()
+        local configName = Options.ConfigName.Value
+        if SaveConfig(configName) then
+            ConfigDropdown:SetValues(GetAllConfigs())
+            Options.ConfigName:SetValue('')
+        end
+    end
+})
+
+RightBoxMisc:AddButton({
+    Text = 'Load Selected Config',
+    Func = function()
+        local selectedConfig = ConfigDropdown.Value
+        LoadConfig(selectedConfig)
+    end
+})
+
+RightBoxMisc:AddButton({
+    Text = 'Delete Selected Config',
+    Func = function()
+        local selectedConfig = ConfigDropdown.Value
+        if DeleteConfig(selectedConfig) then
+            ConfigDropdown:SetValues(GetAllConfigs())
+            ConfigDropdown:SetValue(nil)
+        end
+    end
+})
+
+RightBoxMisc:AddButton({
+    Text = 'Set As Auto-Load',
+    Func = function()
+        local selectedConfig = ConfigDropdown.Value
+        SetAutoConfig(selectedConfig)
+    end
+})
+
+RightBoxMisc:AddDivider()
+RightBoxMisc:AddButton({
+    Text = 'Unload Script',
+    Func = function()
+        UnloadScript()
+        Library:Unload()
+    end
+})
+RightBoxMisc:AddLabel('Menu Key'):AddKeyPicker('MenuKey', { Default = 'Insert', NoUI = true, Text = 'Menu Toggle' })
+
+if Options and Options.MenuKey then Library.ToggleKeybind = Options.MenuKey end
+
+task.spawn(function()
+    task.wait(0.5)
+    LoadAutoConfig()
+end)

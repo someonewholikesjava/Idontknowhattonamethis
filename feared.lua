@@ -8,7 +8,7 @@ if not getgenv().HexploitAutoExecuteSetup then
     
     LocalPlayer.OnTeleport:Connect(function(State)
         if State == Enum.TeleportState.Started then
-            local scriptSource = game:HttpGet("https://raw.githubusercontent.com/YourGithub/YourRepo/main/script.lua") -- REPLACE WITH YOUR RAW GITHUB LINK
+            local scriptSource = game:HttpGet("https://raw.githubusercontent.com/someonewholikesjava/Idontknowhattonamethis/refs/heads/main/feared.lua") -- REPLACE WITH YOUR RAW GITHUB LINK
             
             -- For most executors
             if queue_on_teleport then

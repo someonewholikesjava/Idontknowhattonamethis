@@ -1294,6 +1294,70 @@ local function TriggerLayAnimation()
     end)
 end
 
+-- [[ AUTO DELETE SPRAY CAN - ALWAYS ON ]] --
+
+local function DeleteSprayInstantly()
+    local character = LocalPlayer.Character
+    local backpack = LocalPlayer.Backpack
+    
+    if character then
+        local spray = character:FindFirstChild("spray")
+        if spray then
+            spray:Destroy()
+        end
+    end
+    
+    if backpack then
+        local spray = backpack:FindFirstChild("spray")
+        if spray then
+            spray:Destroy()
+        end
+    end
+end
+
+local function SetupSprayMonitoring(character)
+    character.ChildAdded:Connect(function(child)
+        if child.Name == "spray" then
+            child:Destroy()
+        end
+    end)
+end
+
+LocalPlayer.Backpack.ChildAdded:Connect(function(child)
+    if child.Name == "spray" then
+        child:Destroy()
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(character)
+    SetupSprayMonitoring(character)
+    
+    task.wait(0.1)
+    DeleteSprayInstantly()
+    
+    task.spawn(function()
+        for i = 1, 50 do
+            DeleteSprayInstantly()
+            task.wait(0.05)
+        end
+    end)
+end)
+
+if LocalPlayer.Character then
+    SetupSprayMonitoring(LocalPlayer.Character)
+    
+    task.spawn(function()
+        for i = 1, 50 do
+            DeleteSprayInstantly()
+            task.wait(0.05)
+        end
+    end)
+end
+
+MakeConnection(RunService.Heartbeat, function()
+    DeleteSprayInstantly()
+end)
+
 -- [[ VISUALS SYSTEM ]] --
 
 local function AddPlayerVisuals(player)
